@@ -28,7 +28,7 @@ epochs_df['lon'] = geographic longitude (-west, +east) [degrees]
 epochs_df['height'] = geometric altitude
 with WGS-84 reference ellipsoid [m]
 
-ncf is a TIEGCM NetCDF history file and no more than one day's
+ncf is a TIE-GCM NetCDF history file and no more than one day's
 data is stored in a single file.
 fldstr is string type name of the TIE-GCM variable.
 fldstr MUST be variable with 4 dims (time, ilev, lat, lon)
