@@ -1,4 +1,6 @@
 # TIE-GCM orbit interpolator
+[![DOI](https://zenodo.org/badge/619801858.svg)](https://zenodo.org/badge/latestdoi/619801858)
+
 This python code provides a class to interpolate TIE-GCM netcdf
 model outputs to given time, lat, lon, altitude.
 The function "wrt_wgs84" provides an accurate method to interpolate
@@ -7,6 +9,7 @@ to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid,
 Extrapolation on the vertical is True by default with an upper limit of 20 km.
 The extrapolation limit (tolerance) is set in function interpalt (alt_tole).
 Note: vertical extrapolation not recommended for horizontal winds UN, VN.
+
 Requirements:
 toi_constants.py in the current directory.
 
