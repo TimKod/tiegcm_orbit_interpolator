@@ -18,7 +18,6 @@ import netCDF4 as nc
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from scipy.interpolate import interp2d
 # from scipy.interpolate import interp1d
 import calendar
 import toi_constants as tc
@@ -29,7 +28,7 @@ from numba import jit
 '''
 This python code provides a class to interpolate TIE-GCM netcdf
 model outputs to given time, lat, lon, altitude.
-The function "wrt_wgs84" provides an accurate method to interpolate
+The function "nc_wrt_wgs84" provides an accurate method to interpolate
 to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid,
 (e.g., satellite orbit coordinates).
 Extrapolation on the vertical is True by default with an upper limit of 20 km.
@@ -53,6 +52,17 @@ TIE-GCM: Thermosphere-Ionosphere-Electrodynamics General Circulation Model
 
 def toTimestamp(d):
     return calendar.timegm(d.timetuple())
+##
+
+
+def get_txrow(mdf, ix0, ix1):
+    txrow_ix = mdf.index[ix0:ix1].to_pydatetime()
+    txlist = []
+    for t in range(len(txrow_ix)):
+        txlist.append(toTimestamp(txrow_ix[t]))
+    ##
+    txrow_ix = np.array(txlist)
+    return txrow_ix
 ##
 
 
@@ -108,100 +118,87 @@ def get_tgtime_df(ncf):
 ##
 
 
-def trimlatlon(mvar, inlat, latX, inlon, lonY):
+@jit('float64[:,:](float64[:,:,:,:],float64,float64[:],float64,float64[:])',
+     nopython=True, cache=True)
+def bilinear_resample(mvar, inlat, latX, inlon, lonY):
     '''
-        Horizontal slice: Trim to surrounding lats and lons
-        Find the nearest two grid points to the input lat and lon
+        bi-linear interpolation
+        mvar: 4D numpy array in the shape,
+        time, level, lat, lon ==> a1, b1, c1, d1
+        latX: -88.75: 2.5: 88.75
+        lonY: -180.0: 2.5: 177.5
+        inlat, inlon: input lat and lon at which mvar needs resampled.
+        xystep: difference between two grid points
+        in TIE-GCM, xystep is same for both lat and lon
+
+        Guide: https://archive.org/details/numericalrecipes0865unse/page/123
+        Press et al.,
+        Numerical Recipes in C : The Art of Scientific Computing, 1992
     '''
-    # mvar shape time, ilev, lat, lon ==> a1, b1, c1, d1
-    # latitude
-    c1 = len(latX)
-    x1 = (np.abs(latX-inlat)).argmin()
-    # slice through the desired latitude range [-88.75:88.75]
-    if (x1 == c1-1):
-        x1 = x1-1
-        latX = np.copy(latX[x1:None])
-        latX = np.concatenate((latX, [90.0]), axis=0)
-        ##
-        mvar_x1 = np.copy(mvar[:, :, x1:None, :])
-        mvar_x2 = np.copy(mvar[:, :, -1, :])
-        (a1, b1, d1) = mvar_x2.shape
-        mvar_x2 = np.reshape(mvar_x2, (a1, b1, 1, d1))
-        mvar = np.concatenate((mvar_x1, mvar_x2), axis=2)
-    elif (x1 == 0):
-        latX = np.copy(latX[x1:2])
-        latX = np.concatenate(([-90.0], latX), axis=0)
-        ##
-        mvar_x1 = np.copy(mvar[:, :, x1:2, :])
-        mvar_x2 = np.copy(mvar[:, :, x1, :])
-        (a1, b1, d1) = mvar_x2.shape
-        mvar_x2 = np.reshape(mvar_x2, (a1, b1, 1, d1))
-        mvar = np.concatenate((mvar_x2, mvar_x1), axis=2)
-    else:
-        x1 = x1-1
-        x2 = x1+3
-        if (x2 > c1-1):
-            latX = np.copy(latX[x1:None])
-            mvar = np.copy(mvar[:, :, x1:None, :])
-        else:
-            latX = np.copy(latX[x1:x2])
-            mvar = np.copy(mvar[:, :, x1:x2, :])
-    # longitude
-    d1 = len(lonY)
-    y1 = (np.abs(lonY-inlon)).argmin()
-    # slice through the desired longitude range [-180:175]
-    if (y1 == d1-1):
-        # choose lon 170,175,-180 | lonY[0]= -180 == 180
-        y1 = y1-1
-        y2 = 0
-        lonY = np.copy(lonY[y1:None])
-        lonY = np.concatenate((lonY, [180.0]), axis=0)
-        ##
-        mvar_y1 = np.copy(mvar[:, :, :, y1:None])
-        mvar_y2 = np.copy(mvar[:, :, :, y2])
-        (a1, b1, c1) = mvar_y2.shape
-        mvar_y2 = np.reshape(mvar_y2, (a1, b1, c1, 1))
-        mvar = np.concatenate((mvar_y1, mvar_y2), axis=3)
-    elif (y1 == 0):
-        # choose lon 175, -180, -175
-        y2 = lonY[-1]
-        lonY = np.copy(lonY[y1:2])
-        lonY = np.concatenate(([y2], lonY), axis=0)
-        ##
-        mvar_y1 = np.copy(mvar[:, :, :, y1:2])
-        mvar_y2 = np.copy(mvar[:, :, :, -1])
-        (a1, b1, c1) = mvar_y2.shape
-        mvar_y2 = np.reshape(mvar_y2, (a1, b1, c1, 1))
-        mvar = np.concatenate((mvar_y2, mvar_y1), axis=3)
-    else:
-        y1 = y1-1
-        y2 = y1+3
-        if (y2 > d1-1):
-            lonY = lonY[y1:None]
-            mvar = np.copy(mvar[:, :, :, y1:None])
-        else:
-            lonY = lonY[y1:y2]
-            mvar = np.copy(mvar[:, :, :, y1:y2])
-    # Interpolate to inlat, inlon bi-linear
-    (a1, b1, c1, d1) = mvar.shape
-    if (a1 != c1) or (c1 != d1):
-        print("slicing did not happen as expected")
-        print(mvar.shape)
-        print(inlat, inlon)
-        print("x1: ", x1, "y1: ", y1)
-        raise SystemExit
-    # pre-allocate output arrays
-    blvar = np.zeros((a1, b1))
-    for i in range(a1):
-        vari = np.copy(mvar[i, :, :, :])
-        for j in range(b1):
-            varj = np.copy(vari[j, :, :])
-            # print(varj.shape,lonY.shape,latX.shape)
-            f = interp2d(lonY, latX, varj, kind='linear')
-            blvar[i, j] = f(inlon, inlat)
-            # print(blvar[i,j])
     ##
-    return blvar
+    # make sure inlon agrees with our longitude format: -180:180 range
+    inlon = np.mod(inlon - 180.0, 360.0) - 180.0
+    xystep = 2.5
+    # find latitude corners
+    latlen = len(latX)
+    lx = (np.abs(latX-inlat)).argmin()
+    c1 = lx
+    # three cases
+    if (lx == latlen-1):
+        c2 = c1
+        w_x1 = np.true_divide(np.abs(90.0 - inlat), xystep)
+        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+    elif (lx == 0):
+        c2 = c1
+        w_x1 = np.true_divide(np.abs(-90.0 - inlat), xystep)
+        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+    else:
+        if (latX[lx] > inlat):
+            c2 = lx - 1
+        elif (latX[lx] < inlat):
+            c2 = lx + 1
+        ##
+        w_x1 = np.true_divide(np.abs(latX[c1] - inlat), xystep)
+        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+    ##
+    # find longitude corners
+    lonlen = len(lonY)
+    ly = (np.abs(lonY-inlon)).argmin()
+    d1 = ly
+    # three cases
+    if (ly == lonlen-1):
+        # global wrap around case: -180 == 180
+        if (lonY[ly] > inlon):
+            d2 = ly - 1
+            w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
+            w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
+        elif (lonY[ly] < inlon):
+            d2 = 0
+            w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
+            w_y2 = np.true_divide(np.abs(180.0 - inlon), xystep)
+    elif (ly == 0):
+        d2 = ly + 1
+        w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
+        w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
+    else:
+        if (lonY[ly] > inlon):
+            d2 = ly - 1
+        elif (lonY[ly] < inlon):
+            d2 = ly + 1
+        ##
+        w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
+        w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
+    ##
+    # get the data points at the four corners
+    c1_d1 = np.copy(mvar[:, :, c1, d1])
+    c2_d1 = np.copy(mvar[:, :, c2, d1])
+    c1_d2 = np.copy(mvar[:, :, c1, d2])
+    c2_d2 = np.copy(mvar[:, :, c2, d2])
+    ##
+    blvar = (c1_d1 * w_x2 + c2_d1 * w_x1) * w_y2
+    blvar = blvar + (c1_d2 * w_x2 + c2_d2 * w_x1) * w_y1
+    ##
+    return blvar.astype(np.float64)
 ##
 
 
@@ -400,8 +397,8 @@ def potH_at_hgt(geoh, effR, Ng, gs):
 
 @jit('float64[:](float64[:,:], float64[:,:], float64, int32, int32, boolean)',
      nopython=True, cache=True)
-def interpalt(zg, mvar, tohgt, lev_id, Qln, extrap):
-    ''' zg: tiegcm height array [cm]
+def interpalt(tgZ, mvar, tohgt, lev_id, Qln, extrap):
+    ''' tgZ: tiegcm height array [cm]
         mvar: Q1 array
         tohgt: height to interpolate to [m]
         lev_id: whether Q1 is on lev or ilev
@@ -411,8 +408,8 @@ def interpalt(zg, mvar, tohgt, lev_id, Qln, extrap):
         vertical extrapolation not recommended for horizontal winds UN, VN
     '''
     ##
-    # Convert zg to meters
-    zg = np.true_divide(zg, 100)
+    # Convert tgZ to meters
+    tgZ = np.true_divide(tgZ, 100)
     # Interpolate to tohgt -- linear
     (a2, b2) = mvar.shape
     blvar = np.zeros(a2)
@@ -425,9 +422,9 @@ def interpalt(zg, mvar, tohgt, lev_id, Qln, extrap):
         mvar = np.log(mvar)
     ##
     for i in range(a2):
-        zg_x = np.copy(zg[i, :])
-        # Interpolate ZG to midpoints for "lev" variables
-        # e.g., TE,TN,UN,VN,O1,O2,HE
+        zg_x = np.copy(tgZ[i, :])
+        # Interpolate Z to midpoints for "lev" variables
+        # e.g., TI,TE,TN,UN,VN,O1,O2,HE
         if (lev_id == 111):
             zg_x = 0.5 * (zg_x[0:-1] + zg_x[1:None])
             va_y = np.copy(mvar[i, 0:-1])
@@ -449,7 +446,7 @@ def interpalt(zg, mvar, tohgt, lev_id, Qln, extrap):
             if (alt_diff > alt_tole):
                 # No extrapolation above zg_x.max() + alt_tole
                 blvar[i] = np.nan
-            elif (alt_diff > 0) and (alt_diff < alt_tole):
+            elif (alt_diff > 0) and (alt_diff <= alt_tole):
                 # Linearly extrapolate to tohgt
                 # Ne vs altitude profile is complicated. Instead of the full
                 # profile use only the last few values for the linear fit.
@@ -477,25 +474,25 @@ def interpalt(zg, mvar, tohgt, lev_id, Qln, extrap):
     if (Qln == 900):
         blvar = np.exp(blvar)
     ##
-    return blvar
+    return blvar.astype(np.float64)
 ##
 
 
-def interp_wrt_wgs84(epochs_df, Mod_df, cur_ncf, Q1, extrap):
+def nc_process_loop(epochs_df, Mod_df, cur_ncf, Q1, extrap):
     # a separate function would be useful here to determine
     # quantities that need to be interpolated in log-space.
     # For now add the desired Qs to the list logQs
     logQs = ["DEN"]
     if (Q1 in logQs):
-        Qln = 900
+        Qln = np.int32(900)
     else:
-        Qln = 899
+        Qln = np.int32(899)
     ##
     # Load the model quantities
     tgQ1 = extract_ncvar(cur_ncf, Q1)
     tgQ2 = extract_ncvar(cur_ncf, "Z")  # Z is GeoPOTENTIAL height
-    tglat = extract_ncvar(cur_ncf, 'lat')
-    tglon = extract_ncvar(cur_ncf, 'lon')
+    tglat = np.float64(extract_ncvar(cur_ncf, 'lat'))
+    tglon = np.float64(extract_ncvar(cur_ncf, 'lon'))
     ##
     (_, Q1lev, _, _) = inq_ncvar_dim_names(cur_ncf, Q1)
     if (Q1lev == "ilev"):
@@ -507,9 +504,10 @@ def interp_wrt_wgs84(epochs_df, Mod_df, cur_ncf, Q1, extrap):
         print("Q1 level is not as expected.")
         raise SystemExit
     ##
-    # Sanity check dimensions
+    # store dimensions locally
     (aa, bb, cc, dd) = tgQ1.shape  # time, ilev, lat, lon
     ##
+    # Sanity check dimensions
     if (tgQ1.shape != tgQ2.shape):
         print("shape mismatch tgQ1 tgQ2: ", tgQ1.shape, " vs ", tgQ2.shape)
         raise SystemExit
@@ -545,7 +543,7 @@ def interp_wrt_wgs84(epochs_df, Mod_df, cur_ncf, Q1, extrap):
         psdict = {'Date': epochs_df.index[i], 'Lat': inlat,
                   'Lon': inlon, 'Height': inalt}
         ##
-        # time
+        # check time to continue
         pivot = epochs_df.index[i].to_pydatetime()
         tx = Mod_df.index.get_indexer([pivot], method='nearest')
         tx = int(tx[0])
@@ -560,67 +558,61 @@ def interp_wrt_wgs84(epochs_df, Mod_df, cur_ncf, Q1, extrap):
             psdict["Tg"+Q1] = np.nan
             postlist.append(psdict)
             psdict = None
+            continue
+        ##
+        # Time Index to trim model
+        if (tx == aa-1):
+            tm0 = tx - 1
+            tm1 = None
+        elif (tx == 0):
+            tm0 = tx
+            tm1 = tm0 + 2
         else:
-            # trim model Time Index
-            if (tx == aa-1):
-                tm = tx-2
-                tm1 = Mod_df.index[tm:None].to_pydatetime()
-            elif (tx == 0):
-                tm = tx
-                tm1 = Mod_df.index[tm:tm+3].to_pydatetime()
-            else:
-                tm = tx-1
-                tm1 = Mod_df.index[tm:tm+3].to_pydatetime()
-            ##
-            pivot = toTimestamp(pivot)
-            txrow = np.array([toTimestamp(tm1[0]),
-                              toTimestamp(tm1[1]),
-                              toTimestamp(tm1[2])])
-            ##
-            # select model time row tx and tx+1 (4D: time, lev, lat, lon)
-            if (tx == aa-1):
-                tm = tx-2
-                iq2_ps = np.copy(tgQ2[tm:None, :, :, :])
-                iq1_ps = np.copy(tgQ1[tm:None, :, :, :])
-            elif (tx == 0):
-                tm = tx
-                iq2_ps = np.copy(tgQ2[tm:tm+3, :, :, :])
-                iq1_ps = np.copy(tgQ1[tm:tm+3, :, :, :])
-            else:
-                tm = tx-1
-                iq2_ps = np.copy(tgQ2[tm:tm+3, :, :, :])
-                iq1_ps = np.copy(tgQ1[tm:tm+3, :, :, :])
-            # Trim and Interpolate on lat-lon
-            iq2_ps = trimlatlon(iq2_ps, inlat, tglat, inlon, tglon)
-            iq1_ps = trimlatlon(iq1_ps, inlat, tglat, inlon, tglon)
-            ##
-            # Find the geopotential height at inalt
-            ##
-            # First, calculate gravity normal at input coordinates
-            grav_norm = find_normgrav(inalt, latrad, lonrad, sphi2)
-            # Effective radius at inlat at the surface
-            Rphi = effRE_at_lat(sphi2)
-            # Gravity on the surface at inlat
-            gsphi = grav_at_lat(sphi2)
-            # Calculate geopotential height at inalt
-            potHi = potH_at_hgt(inalt, Rphi, grav_norm, gsphi)
-            # Interpolate on the vertical
-            # interpalt(zg, mvar, tohgt, lbl, Qln, extrap)
-            # Here, use potHi as the inalt
-            iq1_ps = interpalt(iq2_ps, iq1_ps, potHi, Q1lev, Qln, extrap)
-            ##
-            # Interpolate to current time
-            # ynew = np.interp(xnew, x, y)
-            iq1_ps = np.interp(pivot, txrow, iq1_ps)
-            # Append to Dictionary
-            # iq1_ps is in model units
-            psdict["Tg"+Q1] = iq1_ps
-            # Append to df list
-            postlist.append(psdict)
-            psdict = None
-            #
-            if i % 500 == 0:
-                print(i, nr)
+            tm0 = tx - 1
+            tm1 = tm0 + 2
+        ##
+        # txrow for the time-interpolation
+        pivot = toTimestamp(pivot)
+        txrow = get_txrow(Mod_df, tm0, tm1)
+        ##
+        # limit model time row (4D: time, lev, lat, lon)
+        iq2_ps = np.float64(np.copy(tgQ2[tm0:tm1, :, :, :]))
+        iq1_ps = np.float64(np.copy(tgQ1[tm0:tm1, :, :, :]))
+        # Trim and Interpolate on lat-lon
+        # bilinear_resample(mvar, inlat, latX, inlon, lonY)
+        iq2_ps = bilinear_resample(iq2_ps, inlat, tglat,
+                                   inlon, tglon)
+        iq1_ps = bilinear_resample(iq1_ps, inlat, tglat,
+                                   inlon, tglon)
+        ##
+        # Find the geopotential height at inalt
+        ##
+        # First, calculate gravity normal at input coordinates
+        grav_norm = find_normgrav(inalt, latrad, lonrad, sphi2)
+        # Effective radius at inlat at the surface
+        Rphi = effRE_at_lat(sphi2)
+        # Gravity on the surface at inlat
+        gsphi = grav_at_lat(sphi2)
+        # Calculate geopotential height at inalt
+        potHi = potH_at_hgt(inalt, Rphi, grav_norm, gsphi)
+        # Interpolate on the vertical
+        # interpalt(Z, mvar, tohgt, lbl, Qln, extrap)
+        # Here, use potHi as the inalt
+        iq1_ps = interpalt(iq2_ps, iq1_ps, potHi,
+                           Q1lev, Qln, extrap)
+        ##
+        # Interpolate to current time
+        # ynew = np.interp(xnew, x, y)
+        iq1_ps = np.interp(pivot, txrow, iq1_ps)
+        # Append to Dictionary
+        # iq1_ps is in model units
+        psdict["Tg"+Q1] = iq1_ps
+        # Append to df list
+        postlist.append(psdict)
+        psdict = None
+        #
+        if i % 500 == 0:
+            print(i, nr, Q1)
     # prepare tmp dfs
     odf = pd.DataFrame(postlist)
     postlist = None
@@ -643,7 +635,7 @@ def out_emptydf(epochs_df, fldstr):
 
 
 class interp_epochs:
-    def wrt_wgs84(epochs_df, ncf, fldstr, extrapolate=True):
+    def nc_wrt_wgs84(epochs_df, ncf, fldstr, extrapolate=True):
         ''' This code interpolates the fldstr variable found in the tiegcm
             ncf file to the locations given in epochs_df.
             Input Conditions:
@@ -660,6 +652,9 @@ class interp_epochs:
 
             Returns a Pandas dataframe with columns:
             Date, Lat, Lon, Height, Tg+"fldstr"
+
+            USE this with a single nc file
+            e.g., parallel call Long_runs/GPI* individual files
         '''
         ##
         tgtime_df = get_tgtime_df(ncf)
@@ -668,10 +663,10 @@ class interp_epochs:
         try:
             epochs_df = epochs_df.loc[refday].copy(deep=True)
             # Call the MAIN Interpolation loop
-            outdf = interp_wrt_wgs84(epochs_df,
-                                     tgtime_df,
-                                     ncf, fldstr,
-                                     extrap=extrapolate)
+            outdf = nc_process_loop(epochs_df,
+                                    tgtime_df,
+                                    ncf, fldstr,
+                                    extrap=extrapolate)
         except KeyError:
             # if epochs_df has no matching data for this day,
             # then we leave with a nan df
