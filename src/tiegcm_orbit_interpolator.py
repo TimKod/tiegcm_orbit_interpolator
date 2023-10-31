@@ -147,13 +147,13 @@ def bilinear_resample(mvar, inlat, latX, inlon, lonY):
     if (lx == latlen-1):
         c2 = c1
         w_x1 = np.true_divide(np.abs(90.0 - inlat), xystep)
-        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+        w_x2 = w_x1
     elif (lx == 0):
         c2 = c1
         w_x1 = np.true_divide(np.abs(-90.0 - inlat), xystep)
-        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+        w_x2 = w_x1
     else:
-        if (latX[lx] > inlat):
+        if (latX[lx] >= inlat):
             c2 = lx - 1
         elif (latX[lx] < inlat):
             c2 = lx + 1
@@ -181,7 +181,7 @@ def bilinear_resample(mvar, inlat, latX, inlon, lonY):
         w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
         w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
     else:
-        if (lonY[ly] > inlon):
+        if (lonY[ly] >= inlon):
             d2 = ly - 1
         elif (lonY[ly] < inlon):
             d2 = ly + 1
