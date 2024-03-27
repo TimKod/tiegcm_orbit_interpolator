@@ -119,7 +119,7 @@ def get_tgtime_df(ncf):
 
 
 @jit('float64[:,:](float64[:,:,:,:],float64,float64[:],float64,float64[:])',
-     nopython=True, cache=True)
+     nopython=True, nogil=True)
 def bilinear_resample(mvar, inlat, latX, inlon, lonY):
     '''
         bi-linear interpolation
@@ -141,62 +141,48 @@ def bilinear_resample(mvar, inlat, latX, inlon, lonY):
     xystep = 2.5
     # find latitude corners
     latlen = len(latX)
-    lx = (np.abs(latX-inlat)).argmin()
+    lx = (np.abs(latX - inlat)).argmin()
     c1 = lx
-    # three cases
-    if (lx == latlen-1):
-        c2 = c1
-        w_x1 = np.true_divide(np.abs(90.0 - inlat), xystep)
-        w_x2 = w_x1
-    elif (lx == 0):
-        c2 = c1
-        w_x1 = np.true_divide(np.abs(-90.0 - inlat), xystep)
-        w_x2 = w_x1
-    else:
-        if (latX[lx] >= inlat):
-            c2 = lx - 1
-        elif (latX[lx] < inlat):
-            c2 = lx + 1
-        ##
-        w_x1 = np.true_divide(np.abs(latX[c1] - inlat), xystep)
-        w_x2 = np.true_divide(np.abs(latX[c2] - inlat), xystep)
+    if (latX[lx] >= inlat):
+        c2 = lx - 1
+        if (c2 < 0):
+            c2 = c1
+            w_x1 = 0.5
+        else:
+            w_x1 = np.true_divide(np.abs(inlat - latX[c2]), xystep)
+    elif (latX[lx] < inlat):
+        c2 = lx + 1
+        if (c2 > latlen - 1):
+            c2 = c1
+            w_x1 = 0.5
+        else:
+            w_x1 = 1 - np.true_divide(np.abs(inlat - latX[c1]), xystep)
+    ##
+    w_x2 = 1 - w_x1
     ##
     # find longitude corners
     lonlen = len(lonY)
-    ly = (np.abs(lonY-inlon)).argmin()
+    ly = (np.abs(lonY - inlon)).argmin()
     d1 = ly
-    # three cases
-    if (ly == lonlen-1):
-        # global wrap around case: -180 == 180
-        if (lonY[ly] > inlon):
-            d2 = ly - 1
+    # handle global wrap around case: -180 == 180
+    if (lonY[ly] >= inlon):
+        d2 = ly - 1
+        if (d2 < 0):
+            d2 = lonlen - 1
             w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
-            w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
-        elif (lonY[ly] < inlon):
-            d2 = 0
-            w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
-            w_y2 = np.true_divide(np.abs(180.0 - inlon), xystep)
-    elif (ly == 0):
+        else:
+            w_y1 = np.true_divide(np.abs(inlon - lonY[d1]), xystep)
+    elif (lonY[ly] < inlon):
         d2 = ly + 1
-        w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
-        w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
-    else:
-        if (lonY[ly] >= inlon):
-            d2 = ly - 1
-        elif (lonY[ly] < inlon):
-            d2 = ly + 1
+        if (d2 > lonlen - 1):
+            d2 = 0
         ##
-        w_y1 = np.true_divide(np.abs(lonY[d1] - inlon), xystep)
-        w_y2 = np.true_divide(np.abs(lonY[d2] - inlon), xystep)
+        w_y1 = np.true_divide(np.abs(inlon - lonY[d1]), xystep)
     ##
-    # get the data points at the four corners
-    c1_d1 = np.copy(mvar[:, :, c1, d1])
-    c2_d1 = np.copy(mvar[:, :, c2, d1])
-    c1_d2 = np.copy(mvar[:, :, c1, d2])
-    c2_d2 = np.copy(mvar[:, :, c2, d2])
+    w_y2 = 1 - w_y1
     ##
-    blvar = (c1_d1 * w_x2 + c2_d1 * w_x1) * w_y2
-    blvar = blvar + (c1_d2 * w_x2 + c2_d2 * w_x1) * w_y1
+    blvar = (w_x2 * w_y2 * mvar[:, :, c1, d1]) + (w_x1 * w_y2 * mvar[:, :, c1, d2])
+    blvar = blvar + (w_x1 * w_y1 * mvar[:, :, c2, d2]) + (w_x2 * w_y1 * mvar[:, :, c2, d1])
     ##
     return blvar.astype(np.float64)
 ##
