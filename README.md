@@ -2,10 +2,10 @@
 
 [![DOI](https://zenodo.org/badge/619801858.svg)](https://zenodo.org/badge/latestdoi/619801858)
 
-This python code provides a class to interpolate [TIE-GCM](https://www.hao.ucar.edu/modeling/tgcm/tie.php) NetCDF model outputs to a given time, latitude, longitude and altitude.. The function ```nc_wrt_wgs84``` provides an accurate method to interpolate to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid, (e.g., satellite orbit coordinates).
+This python code provides a class to interpolate [TIE-GCM](https://www.hao.ucar.edu/modeling/tgcm/tie.php) NetCDF model outputs to a given time, latitude, longitude and altitude.. The function `nc_wrt_wgs84` provides an accurate method to interpolate to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid, (e.g., satellite orbit coordinates).
 
 Extrapolation on the vertical is ![True](https://img.shields.io/badge/True-blue) by default with an upper limit of 20 km.
-The extrapolation limit (tolerance) is set in function ```interpalt (alt_tole)```.
+The extrapolation limit (tolerance) is set in function `interpalt (alt_tole)`.
 
 *Note: vertical extrapolation not recommended for horizontal winds UN, VN.*
 
@@ -46,7 +46,3 @@ df = toi.interp_epochs.nc_wrt_wgs84(epochs_df,
                                  extrapolate=True)
 ```
 
-## Contact
-
-The code is experimental. If you find any bugs, problems or have any other comments to improve the code, please send them to me.  
-Timothy.Kodikara [@] dlr.de
