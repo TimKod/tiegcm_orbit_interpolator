@@ -2,16 +2,17 @@
 
 [![DOI](https://zenodo.org/badge/619801858.svg)](https://zenodo.org/badge/latestdoi/619801858)
 
-This python code provides a class to interpolate TIE-GCM netcdf model outputs to given time, lat, lon, altitude. The function "nc_wrt_wgs84" provides an accurate method to interpolate to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid, (e.g., satellite orbit coordinates).
+This python code provides a class to interpolate [TIE-GCM](https://www.hao.ucar.edu/modeling/tgcm/tie.php) NetCDF model outputs to a given time, latitude, longitude and altitude.. The function ```nc_wrt_wgs84``` provides an accurate method to interpolate to input altitude given as geometric altitude wrt WGS-84 reference ellipsoid, (e.g., satellite orbit coordinates).
 
-Extrapolation on the vertical is True by default with an upper limit of 20 km.
-The extrapolation limit (tolerance) is set in function interpalt (alt_tole).
-Note: vertical extrapolation not recommended for horizontal winds UN, VN.
+Extrapolation on the vertical is ![True](https://img.shields.io/badge/True-blue) by default with an upper limit of 20 km.
+The extrapolation limit (tolerance) is set in function ```interpalt (alt_tole)```.
 
-Requirements:
-toi_constants.py in the current directory.
+*Note: vertical extrapolation not recommended for horizontal winds UN, VN.*
 
-No installation required. To use in your work,
+**Requirements**: toi_constants.py in the current directory.
+
+![No installation required](https://img.shields.io/badge/No%20installation%20required-red)
+To use in your work,
 copy the tiegcm_orbit_interpolator.py and the toi_constants.py files (from src/)
 to your working directory. That's all.
 
